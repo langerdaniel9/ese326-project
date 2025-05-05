@@ -13,7 +13,13 @@ Partitioner::Partitioner(const std::unordered_map<std::string, Node>& n,
 void Partitioner::buildNetMappings() {
     for (const auto& [netName, net] : nets) {
         for (const auto& [nodeName, _] : net.pins) {
-            nodeToNets[nodeName].push_back(netName);
+            // Only add mappings for non-terminal nodes or if the node exists
+            if (nodes.count(nodeName) &&
+                nodes.at(nodeName).type != NodeType::Terminal &&
+                nodes.at(nodeName).type != NodeType::TerminalNI) {
+                nodeToNets[nodeName].push_back(netName);
+            }
+            // We still need all nodes in netToNodes for cut calculation
             netToNodes[netName].push_back(nodeName);
         }
     }
@@ -59,24 +65,30 @@ void Partitioner::computeInitialGains() {
     gainBucket.clear();
 
     for (const auto& [nodeName, part] : nodeToPartition) {
+        // Skip terminal nodes completely in gain calculation
+        if (nodes.count(nodeName) &&
+            (nodes.at(nodeName).type == NodeType::Terminal ||
+             nodes.at(nodeName).type == NodeType::TerminalNI)) {
+            continue;
+        }
+
         int gain = 0;
         for (const auto& netName : nodeToNets[nodeName]) {
             const auto& nodesInNet = netToNodes[netName];
             int fromCount = 0;
             int toCount = 0;
             for (const auto& n : nodesInNet) {
-                if (nodeToPartition[n] == part) {
-                    fromCount++;
-                } else {
-                    toCount++;
+                // Only consider nodes in partitions for gain calculation
+                if (nodeToPartition.count(n) > 0) {
+                    if (nodeToPartition[n] == part) {
+                        fromCount++;
+                    } else {
+                        toCount++;
+                    }
                 }
             }
-            if (fromCount == 1) {
-                gain++;
-            }
-            if (toCount == 0) {
-                gain--;
-            }
+            if (fromCount == 1) gain++;
+            if (toCount == 0) gain--;
         }
         nodeGains[nodeName] = gain;
         gainBucket[gain].insert(nodeName);
@@ -360,7 +372,8 @@ int Partitioner::calculateCutSize() const {
     for (const auto& [netName, net] : nets) {
         std::unordered_set<std::string> parts;
         for (const auto& [nodeName, _] : net.pins) {
-            if (nodeToPartition.count(nodeName)) {
+            // Only consider nodes that are in a partition (non-terminals)
+            if (nodeToPartition.count(nodeName) > 0) {
                 parts.insert(nodeToPartition.at(nodeName));
             }
         }
@@ -408,15 +421,37 @@ bool Partitioner::isPartitionFeasible() const {
             return false;
         }
     }
-    // Check if all nodes are assigned
-    int assigned = 0;
-    for (const auto& [name, node] : nodes) {
-        if (node.type == NodeType::Terminal || node.type == NodeType::TerminalNI) {
+
+    // Count nodes in each partition
+    int countInA = 0, countInB = 0;
+    int areaInA = 0, areaInB = 0;
+
+    for (const auto& [name, part] : nodeToPartition) {
+        if (nodes.at(name).type == NodeType::Terminal ||
+            nodes.at(name).type == NodeType::TerminalNI) {
             continue;
         }
-        if (nodeToPartition.count(name)) {
-            assigned++;
+
+        int area = nodes.at(name).width * nodes.at(name).height;
+        if (part == "A") {
+            countInA++;
+            areaInA += area;
+        } else {
+            countInB++;
+            areaInB += area;
         }
     }
+
+    // Check if partitions exceed caps
+    if (areaDef == AreaDef::Area && (areaInA > cap || areaInB > cap)) {
+        return false;
+    }
+
+    if (areaDef == AreaDef::Num && (countInA > cap || countInB > cap)) {
+        return false;
+    }
+
+    // Check if all nodes are assigned
+    int assigned = countInA + countInB;
     return assigned == totalCount;
 }
