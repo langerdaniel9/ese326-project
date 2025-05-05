@@ -1,5 +1,7 @@
 #include <iostream>
 #include <string>
+#include <filesystem>
+#include <fstream>
 
 #include "parser.hpp"
 #include "partitioner.hpp"
@@ -7,19 +9,19 @@
 int main() {
     // Stuff to change
     std::string auxFilePath = "benchmarks/example/example.aux"; // Path to the .aux file
-    std::string areaDefStr = "area";  // "area" or "num"
-    int maxArea = 1000;  // max area per partition
-    int maxNum = 3;     // max number of gates per partition
+    std::string areaDefStr = "num";  // "area" or "num"
+    int maxArea = 1100;  // max area per partition
+    int maxNum = 5;     // max number of gates per partition
 
     AreaDef areaDef = AreaDef::Area;
     int cap;
 
     if (areaDefStr == "num") {
         areaDef = AreaDef::Num;
-        cap = maxNum;  // Example: max 3 gates per partition
+        cap = maxNum;  
     } else if (areaDefStr == "area") {
         areaDef = AreaDef::Area;
-        cap = maxArea;  // Example: max area 1000 per partition
+        cap = maxArea;  
     } else {
         std::cerr << "Invalid area definition. Use 'num' or 'area'." << std::endl;
         return 1;
@@ -32,8 +34,29 @@ int main() {
     }
 
     Partitioner partitioner(parser.getNodes(), parser.getNets(), areaDef, cap);
+
+    // Check if initial partition is possible
+    if (!partitioner.isPartitionFeasible()) {
+        std::cerr << "Partition cannot be created: constraints cannot be satisfied." << std::endl;
+        // Output error to file as well
+        std::filesystem::create_directories("results");
+        std::string outFile = "results/" + std::filesystem::path(auxFilePath).stem().string() + ".part";
+        std::ofstream fout(outFile);
+        fout << "Partition cannot be created: constraints cannot be satisfied." << std::endl;
+        return 2;
+    }
+
     partitioner.runFM();
-    partitioner.printResult();
+
+    // Output to file
+    std::filesystem::create_directories("results");
+    std::string outFile = "results/" + std::filesystem::path(auxFilePath).stem().string() + ".part";
+    std::ofstream fout(outFile);
+    if (!fout) {
+        std::cerr << "Could not open output file for writing." << std::endl;
+        return 3;
+    }
+    partitioner.printResult(fout);
 
     return 0;
 }

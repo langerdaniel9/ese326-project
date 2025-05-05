@@ -24,6 +24,9 @@ class Partitioner {
 
     void runFM();
     void printResult() const;
+    void printResult(std::ostream& os) const;
+
+    bool isPartitionFeasible() const;
 
    private:
     const std::unordered_map<std::string, Node>& nodes;
@@ -50,6 +53,7 @@ class Partitioner {
     void initializePartition();
     void buildNetMappings();
     void computeInitialGains();
+    void updateGain(const std::string& nodeName);
     void runOnePass();
     int calculateCutSize() const;
 };

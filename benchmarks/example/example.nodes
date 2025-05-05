@@ -1,0 +1,17 @@
+UCLA nodes 1.0
+# Created  :  May 04 2025
+# User     :  Example User
+
+NumNodes      :  10
+NumTerminals  :  3
+
+    n0     10     10    terminal
+    n1     20     20
+    n2     15     15
+    n3     12     12
+    n4     18     18
+    n5     10     10    terminal
+    n6     14     14
+    n7     16     16
+    n8     13     13
+    n9     11     11    terminal

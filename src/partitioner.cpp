@@ -24,8 +24,9 @@ void Partitioner::initializePartition() {
     countA = countB = totalCount = 0;
 
     for (const auto& [name, node] : nodes) {
-        if (node.type == NodeType::Terminal || node.type == NodeType::TerminalNI)
+        if (node.type == NodeType::Terminal || node.type == NodeType::TerminalNI) {
             continue;
+        }
 
         int area = node.width * node.height;
         totalArea += area;
@@ -64,33 +65,82 @@ void Partitioner::computeInitialGains() {
             int fromCount = 0;
             int toCount = 0;
             for (const auto& n : nodesInNet) {
-                if (nodeToPartition[n] == part)
+                if (nodeToPartition[n] == part) {
                     fromCount++;
-                else
+                } else {
                     toCount++;
+                }
             }
-            if (fromCount == 1) gain++;
-            if (toCount == 0) gain--;
+            if (fromCount == 1) {
+                gain++;
+            }
+            if (toCount == 0) {
+                gain--;
+            }
         }
         nodeGains[nodeName] = gain;
         gainBucket[gain].insert(nodeName);
     }
 }
 
+void Partitioner::updateGain(const std::string& nodeName) {
+    int oldGain = nodeGains[nodeName];
+    gainBucket[oldGain].erase(nodeName);
+    if (gainBucket[oldGain].empty()) {
+        gainBucket.erase(oldGain);
+    }
+
+    int gain = 0;
+    std::string part = nodeToPartition[nodeName];
+    for (const auto& netName : nodeToNets[nodeName]) {
+        const auto& nodesInNet = netToNodes[netName];
+        int fromCount = 0, toCount = 0;
+        for (const auto& n : nodesInNet) {
+            if (nodeToPartition[n] == part)
+                fromCount++;
+            else
+                toCount++;
+        }
+        if (fromCount == 1) gain++;
+        if (toCount == 0) gain--;
+    }
+    nodeGains[nodeName] = gain;
+    gainBucket[gain].insert(nodeName);
+}
+
 void Partitioner::runFM() {
-    bool improved = true;
-    while (improved) {
-        improved = false;
+    int prevCut = calculateCutSize();
+    while (true) {
         runOnePass();
-        int cut = calculateCutSize();
-        std::cout << "Cut size: " << cut << std::endl;
+        int newCut = calculateCutSize();
+        if (newCut < prevCut) {
+            prevCut = newCut;
+        } else {
+            break;
+        }
     }
 }
 
 void Partitioner::runOnePass() {
-    int moved = 0;
+    std::unordered_map<std::string, std::string> originalPartition = nodeToPartition;
+    int originalAreaA = areaA;
+    int originalAreaB = areaB;
+    int originalCountA = countA;
+    int originalCountB = countB;
 
-    while (!gainBucket.empty()) {
+    int bestCutSize = calculateCutSize();
+    int currentCutSize = bestCutSize;
+    int movesToBest = 0;
+    int movesCount = 0;
+
+    std::vector<int> moveGains;
+    std::vector<std::string> moveSequence;
+
+    for (auto& [k, v] : locked) {
+        v = false;
+    }
+
+    while (!gainBucket.empty() && movesCount < nodeToPartition.size()) {
         auto it = gainBucket.rbegin();
         int maxGain = it->first;
         auto& candidates = it->second;
@@ -102,26 +152,40 @@ void Partitioner::runOnePass() {
 
         std::string bestNode = *candidates.begin();
         candidates.erase(candidates.begin());
-        if (candidates.empty()) gainBucket.erase(maxGain);
+        if (candidates.empty()) {
+            gainBucket.erase(maxGain);
+        }
 
-        if (locked[bestNode]) continue;
+        if (locked[bestNode]) {
+            continue;
+        }
 
         std::string& part = nodeToPartition[bestNode];
         std::string otherPart = (part == "A") ? "B" : "A";
         int area = nodes.at(bestNode).width * nodes.at(bestNode).height;
 
-        // --- Enforce cap for area or number ---
+        // Enforce cap for area or number 
         bool canMove = true;
         if (areaDef == AreaDef::Area) {
-            if (otherPart == "A" && areaA + area > cap) canMove = false;
-            if (otherPart == "B" && areaB + area > cap) canMove = false;
+            if (otherPart == "A" && areaA + area > cap) {
+                canMove = false;
+            }
+            if (otherPart == "B" && areaB + area > cap) {
+                canMove = false;
+            }
         } else {  // AreaDef::Num
-            if (otherPart == "A" && countA + 1 > cap) canMove = false;
-            if (otherPart == "B" && countB + 1 > cap) canMove = false;
+            if (otherPart == "A" && countA + 1 > cap) {
+                canMove = false;
+            }
+            if (otherPart == "B" && countB + 1 > cap) {
+                canMove = false;
+            }
         }
-        if (!canMove) continue;
+        if (!canMove) {
+            continue;
+        }
 
-        // --- Update partition and stats ---
+        // Update partition and stats 
         part = otherPart;
         if (areaDef == AreaDef::Area) {
             if (part == "A") {
@@ -141,22 +205,168 @@ void Partitioner::runOnePass() {
             }
         }
         locked[bestNode] = true;
-        moved++;
 
-        computeInitialGains();
+        for (const auto& netName : nodeToNets[bestNode]) {
+            for (const auto& neighbor : netToNodes[netName]) {
+                if (neighbor != bestNode && !locked[neighbor]) {
+                    updateGain(neighbor);
+                }
+            }
+        }
+
+        moveSequence.push_back(bestNode);
+        moveGains.push_back(maxGain);
+        movesCount++;
+
+        currentCutSize = calculateCutSize();
+
+        if (currentCutSize < bestCutSize) {
+            bestCutSize = currentCutSize;
+            movesToBest = movesCount;
+        }
     }
-    for (auto& [k, v] : locked) v = false;
+
+    if (movesToBest > 0) {
+        nodeToPartition = originalPartition;
+        areaA = originalAreaA;
+        areaB = originalAreaB;
+        countA = originalCountA;
+        countB = originalCountB;
+
+        for (int i = 0; i < movesToBest; i++) {
+            std::string nodeName = moveSequence[i];
+            std::string& part = nodeToPartition[nodeName];
+            std::string otherPart = (part == "A") ? "B" : "A";
+            int area = nodes.at(nodeName).width * nodes.at(nodeName).height;
+
+            part = otherPart;
+
+            if (areaDef == AreaDef::Area) {
+                if (part == "A") {
+                    areaA += area;
+                    areaB -= area;
+                } else {
+                    areaB += area;
+                    areaA -= area;
+                }
+            } else {  // AreaDef::Num
+                if (part == "A") {
+                    countA++;
+                    countB--;
+                } else {
+                    countB++;
+                    countA--;
+                }
+            }
+        }
+    } else {
+        nodeToPartition = originalPartition;
+        areaA = originalAreaA;
+        areaB = originalAreaB;
+        countA = originalCountA;
+        countB = originalCountB;
+    }
+
+    for (auto& [k, v] : locked) {
+        v = false;
+    }
 }
+
+// void Partitioner::runOnePass() {
+//     int moved = 0;
+//
+//     while (!gainBucket.empty()) {
+//         auto it = gainBucket.rbegin();
+//         int maxGain = it->first;
+//         auto& candidates = it->second;
+//
+//         if (candidates.empty()) {
+//             gainBucket.erase(maxGain);
+//             continue;
+//         }
+//
+//         std::string bestNode = *candidates.begin();
+//         candidates.erase(candidates.begin());
+//         if (candidates.empty()) {
+//             gainBucket.erase(maxGain);
+//         }
+//
+//         if (locked[bestNode]) {
+//             continue;
+//         }
+//
+//         std::string& part = nodeToPartition[bestNode];
+//         std::string otherPart = (part == "A") ? "B" : "A";
+//         int area = nodes.at(bestNode).width * nodes.at(bestNode).height;
+//
+//         // --- Enforce cap for area or number ---
+//         bool canMove = true;
+//         if (areaDef == AreaDef::Area) {
+//             if (otherPart == "A" && areaA + area > cap) {
+//                 canMove = false;
+//             }
+//             if (otherPart == "B" && areaB + area > cap) {
+//                 canMove = false;
+//             }
+//         } else {  // AreaDef::Num
+//             if (otherPart == "A" && countA + 1 > cap) {
+//                 canMove = false;
+//             }
+//             if (otherPart == "B" && countB + 1 > cap) {
+//                 canMove = false;
+//             }
+//         }
+//         if (!canMove) {
+//             continue;
+//         }
+//
+//         // --- Update partition and stats ---
+//         part = otherPart;
+//         if (areaDef == AreaDef::Area) {
+//             if (part == "A") {
+//                 areaA += area;
+//                 areaB -= area;
+//             } else {
+//                 areaB += area;
+//                 areaA -= area;
+//             }
+//         } else {
+//             if (part == "A") {
+//                 countA++;
+//                 countB--;
+//             } else {
+//                 countB++;
+//                 countA--;
+//             }
+//         }
+//         locked[bestNode] = true;
+//         moved++;
+//
+//         for (const auto& netName : nodeToNets[bestNode]) {
+//             for (const auto& neighbor : netToNodes[netName]) {
+//                 if (neighbor != bestNode && !locked[neighbor]) {
+//                     updateGain(neighbor);
+//                 }
+//             }
+//         }
+//     }
+//     for (auto& [k, v] : locked) {
+//         v = false;
+//     }
+// }
 
 int Partitioner::calculateCutSize() const {
     int cut = 0;
     for (const auto& [netName, net] : nets) {
         std::unordered_set<std::string> parts;
         for (const auto& [nodeName, _] : net.pins) {
-            if (nodeToPartition.count(nodeName))
+            if (nodeToPartition.count(nodeName)) {
                 parts.insert(nodeToPartition.at(nodeName));
+            }
         }
-        if (parts.size() > 1) cut++;
+        if (parts.size() > 1) {
+            cut++;
+        }
     }
     return cut;
 }
@@ -170,4 +380,43 @@ void Partitioner::printResult() const {
     for (const auto& [name, part] : nodeToPartition) {
         if (part == "B") std::cout << "  " << name << std::endl;
     }
+}
+
+void Partitioner::printResult(std::ostream& os) const {
+    os << "Partition A:" << std::endl;
+    for (const auto& [name, part] : nodeToPartition) {
+        if (part == "A") {
+            os << "  " << name << std::endl;
+        }
+    }
+    os << "Partition B:" << std::endl;
+    for (const auto& [name, part] : nodeToPartition) {
+        if (part == "B") {
+            os << "  " << name << std::endl;
+        }
+    }
+}
+
+bool Partitioner::isPartitionFeasible() const {
+    // Check if any node is too large for any partition
+    for (const auto& [name, node] : nodes) {
+        if (node.type == NodeType::Terminal || node.type == NodeType::TerminalNI) {
+            continue;
+        }
+        int area = node.width * node.height;
+        if (areaDef == AreaDef::Area && area > cap) {
+            return false;
+        }
+    }
+    // Check if all nodes are assigned
+    int assigned = 0;
+    for (const auto& [name, node] : nodes) {
+        if (node.type == NodeType::Terminal || node.type == NodeType::TerminalNI) {
+            continue;
+        }
+        if (nodeToPartition.count(name)) {
+            assigned++;
+        }
+    }
+    return assigned == totalCount;
 }
