@@ -38,22 +38,52 @@ void Partitioner::initializePartition() {
         totalArea += area;
         totalCount++;
 
-        // Partition by area or number of gates, enforcing cap
+        // Assign to the smaller partition, while respecting cap constraints
         if (areaDef == AreaDef::Area) {
-            if (areaA + area <= cap) {
+            // Check which partition has smaller area and if adding to it stays within cap
+            if (areaA <= areaB && areaA + area <= cap) {
+                nodeToPartition[name] = "A";
+                areaA += area;
+            } else if (areaB + area <= cap) {
+                nodeToPartition[name] = "B";
+                areaB += area;
+            } else if (areaA + area <= cap) {
+                // If B is full but A still has space
                 nodeToPartition[name] = "A";
                 areaA += area;
             } else {
-                nodeToPartition[name] = "B";
-                areaB += area;
+                // Neither partition can fit this node within cap
+                // Assign to the one with more space left
+                if (cap - areaA >= cap - areaB) {
+                    nodeToPartition[name] = "A";
+                    areaA += area;
+                } else {
+                    nodeToPartition[name] = "B";
+                    areaB += area;
+                }
             }
         } else {  // AreaDef::Num
-            if (countA + 1 <= cap) {
+            // Check which partition has fewer nodes and if adding to it stays within cap
+            if (countA <= countB && countA + 1 <= cap) {
+                nodeToPartition[name] = "A";
+                countA++;
+            } else if (countB + 1 <= cap) {
+                nodeToPartition[name] = "B";
+                countB++;
+            } else if (countA + 1 <= cap) {
+                // If B is full but A still has space
                 nodeToPartition[name] = "A";
                 countA++;
             } else {
-                nodeToPartition[name] = "B";
-                countB++;
+                // Neither partition can fit this node within cap
+                // Assign to the one with more space left
+                if (cap - countA >= cap - countB) {
+                    nodeToPartition[name] = "A";
+                    countA++;
+                } else {
+                    nodeToPartition[name] = "B";
+                    countB++;
+                }
             }
         }
         locked[name] = false;
@@ -283,89 +313,6 @@ void Partitioner::runOnePass() {
         v = false;
     }
 }
-
-// void Partitioner::runOnePass() {
-//     int moved = 0;
-//
-//     while (!gainBucket.empty()) {
-//         auto it = gainBucket.rbegin();
-//         int maxGain = it->first;
-//         auto& candidates = it->second;
-//
-//         if (candidates.empty()) {
-//             gainBucket.erase(maxGain);
-//             continue;
-//         }
-//
-//         std::string bestNode = *candidates.begin();
-//         candidates.erase(candidates.begin());
-//         if (candidates.empty()) {
-//             gainBucket.erase(maxGain);
-//         }
-//
-//         if (locked[bestNode]) {
-//             continue;
-//         }
-//
-//         std::string& part = nodeToPartition[bestNode];
-//         std::string otherPart = (part == "A") ? "B" : "A";
-//         int area = nodes.at(bestNode).width * nodes.at(bestNode).height;
-//
-//         // --- Enforce cap for area or number ---
-//         bool canMove = true;
-//         if (areaDef == AreaDef::Area) {
-//             if (otherPart == "A" && areaA + area > cap) {
-//                 canMove = false;
-//             }
-//             if (otherPart == "B" && areaB + area > cap) {
-//                 canMove = false;
-//             }
-//         } else {  // AreaDef::Num
-//             if (otherPart == "A" && countA + 1 > cap) {
-//                 canMove = false;
-//             }
-//             if (otherPart == "B" && countB + 1 > cap) {
-//                 canMove = false;
-//             }
-//         }
-//         if (!canMove) {
-//             continue;
-//         }
-//
-//         // --- Update partition and stats ---
-//         part = otherPart;
-//         if (areaDef == AreaDef::Area) {
-//             if (part == "A") {
-//                 areaA += area;
-//                 areaB -= area;
-//             } else {
-//                 areaB += area;
-//                 areaA -= area;
-//             }
-//         } else {
-//             if (part == "A") {
-//                 countA++;
-//                 countB--;
-//             } else {
-//                 countB++;
-//                 countA--;
-//             }
-//         }
-//         locked[bestNode] = true;
-//         moved++;
-//
-//         for (const auto& netName : nodeToNets[bestNode]) {
-//             for (const auto& neighbor : netToNodes[netName]) {
-//                 if (neighbor != bestNode && !locked[neighbor]) {
-//                     updateGain(neighbor);
-//                 }
-//             }
-//         }
-//     }
-//     for (auto& [k, v] : locked) {
-//         v = false;
-//     }
-// }
 
 int Partitioner::calculateCutSize() const {
     int cut = 0;

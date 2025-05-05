@@ -8,10 +8,10 @@
 
 int main() {
     // Stuff to change
-    std::string auxFilePath = "benchmarks/example2/example2.aux";  // Path to the .aux file
+    std::string auxFilePath = "benchmarks/example_large/example_large.aux";  // Path to the .aux file
     std::string areaDefStr = "num";  // "area" or "num"
     int maxArea = 1000;  // max area per partition
-    int maxNum = 500;     // max number of gates per partition
+    int maxNum = 130000;     // max number of gates per partition
 
     AreaDef areaDef = AreaDef::Area;
     int cap;
